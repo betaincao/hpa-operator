@@ -20,20 +20,30 @@ import (
 	"flag"
 	"os"
 
+	"k8s.io/client-go/rest"
+
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	"github.com/navigatorcloud/hpa-operator/controllers"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-
-	"github.com/navigatorcloud/hpa-operator/controllers"
 	// +kubebuilder:scaffold:imports
+)
+
+const (
+	// navigatorCloudHpaOperator is the userAgent name when starting hpa-operator managers.
+	navigatorCloudHpaOperator = "navigatorcloud-hpa-operator"
 )
 
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	restConfigQPS   = flag.Int("rest-config-qps", 30, "QPS of rest config.")
+	restConfigBurst = flag.Int("rest-config-burst", 50, "burst of rest config.")
 )
 
 func init() {
@@ -54,7 +64,11 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+	setRestConfig(cfg)
+	rest.AddUserAgent(cfg, navigatorCloudHpaOperator)
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
 		Port:               9443,
@@ -89,4 +103,14 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func setRestConfig(c *rest.Config) {
+	if *restConfigQPS > 0 {
+		c.QPS = float32(*restConfigQPS)
+	}
+	if *restConfigBurst > 0 {
+		c.Burst = *restConfigBurst
+	}
+	c.UserAgent = ""
 }
