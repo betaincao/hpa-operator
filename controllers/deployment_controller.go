@@ -19,8 +19,11 @@ package controllers
 import (
 	"context"
 
+	"github.com/navigatorcloud/hpa-operator/pkg/wrapper"
+
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
+	k8serrros "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,11 +40,25 @@ type DeploymentReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get;update;patch
 
 func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
+	ctx := context.Background()
 	_ = r.Log.WithValues("deployment", req.NamespacedName)
 
-	// your logic here
+	deployment := &appsv1.Deployment{}
+	err := r.Client.Get(ctx, req.NamespacedName, deployment)
+	if err != nil {
+		if k8serrros.IsNotFound(err) {
+			// Object not found, return.
+			// Created objects are automatically garbage collected.
+			// For additional clean logic use finalizers
+			return ctrl.Result{}, nil
+		}
+		// Error reading the object - requeue the request
+		return ctrl.Result{}, err
+	}
 
+	hpaOperator := wrapper.NewHPAOperator(r.Client, r.Log, req.NamespacedName, deployment.Annotations)
+
+	hpaOperator.DoHorizontalPodAutoscaler("Deployment")
 	return ctrl.Result{}, nil
 }
 
