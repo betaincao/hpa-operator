@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 	"strconv"
 
@@ -34,30 +33,40 @@ const (
 	HPAScheduleJobs = "hpa.autoscaling.navigatorcloud.io/schedule-jobs"
 )
 
+var (
+	HPADefaultLabels = map[string]string{
+		"managed-by": "hpa-operator",
+	}
+)
+
 type hpaOperator struct {
 	client         client.Client
 	log            logr.Logger
 	namespacedName types.NamespacedName
 	annotations    map[string]string
+	kind           string
+	uid            types.UID
 }
 
-func NewHPAOperator(client client.Client, log logr.Logger, namespacedName types.NamespacedName, annotations map[string]string) HPAOperator {
+func NewHPAOperator(client client.Client, log logr.Logger, namespacedName types.NamespacedName, annotations map[string]string, kind string, uid types.UID) HPAOperator {
 	return &hpaOperator{
 		client:         client,
 		log:            log,
 		namespacedName: namespacedName,
 		annotations:    annotations,
+		kind:           kind,
+		uid:            uid,
 	}
 }
 
 type HPAOperator interface {
-	DoHorizontalPodAutoscaler(kind string)
+	DoHorizontalPodAutoscaler(ctx context.Context)
 }
 
 // DoHorizontalPodAutoscaler
 // 为不同的 Workload 处理 HPA 的逻辑
 // 不返回任何错误，如果有错误，只记录
-func (h *hpaOperator) DoHorizontalPodAutoscaler(kind string) {
+func (h *hpaOperator) DoHorizontalPodAutoscaler(ctx context.Context) {
 	hpaLog := h.log.WithValues("doHorizontalPodAutoscaler", "doing")
 
 	hpaLog.Info("start")
@@ -68,9 +77,7 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler(kind string) {
 		}
 	}
 	if !enable {
-		// TODO
-		// 已有的HPA，需要做删除处理
-		h.log.Info("the HPA is disabled in the workload")
+		h.log.Info("The HPA is disabled in the workload")
 		return
 	}
 
@@ -82,31 +89,46 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler(kind string) {
 	if scheduleEnable {
 
 	} else {
-		h.nonScheduleHPA(kind)
+		h.nonScheduleHPA(ctx)
 	}
-
 	return
 }
 
-func (h *hpaOperator) nonScheduleHPA(kind string) {
-	// (2) 创建普通 HPA 资源
+// 创建普通 HPA 资源
+func (h *hpaOperator) nonScheduleHPA(ctx context.Context) {
 	minReplicas, err := extractAnnotationIntValue(h.annotations, HPAMinReplicas)
 	if err != nil {
 		h.log.Error(err, "extractAnnotation minReplicas failed")
 	}
+	// 创建普通的 HPA 资源时，maxReplicas 是必选字段
 	maxReplicas, err := extractAnnotationIntValue(h.annotations, HPAMaxReplicas)
 	if err != nil {
 		h.log.Error(err, "extractAnnotation maxReplicas failed")
 		return
 	}
+	blockOwnerDeletion := true
+	isController := true
+	ref := metav1.OwnerReference{
+		APIVersion:         "apps/v1",
+		Kind:               h.kind,
+		Name:               h.namespacedName.Name,
+		UID:                h.uid,
+		BlockOwnerDeletion: &blockOwnerDeletion,
+		Controller:         &isController,
+	}
+
 	hpa := &v2beta2.HorizontalPodAutoscaler{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-by-operator", h.namespacedName.Name),
+			Name:      h.namespacedName.Name,
 			Namespace: h.namespacedName.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				ref,
+			},
+			Labels: HPADefaultLabels,
 		},
 		Spec: v2beta2.HorizontalPodAutoscalerSpec{
 			ScaleTargetRef: v2beta2.CrossVersionObjectReference{
-				Kind:       kind,
+				Kind:       h.kind,
 				Name:       h.namespacedName.Name,
 				APIVersion: "apps/v1",
 			},
@@ -129,7 +151,6 @@ func (h *hpaOperator) nonScheduleHPA(kind string) {
 	// 查询是否存在对应的 HPA 资源
 	// - 存在，检查 Spec 是否一致，不一致更新
 	// - 不存在，创建对应的HPA资源即可
-	ctx := context.Background()
 	curHPA := &v2beta2.HorizontalPodAutoscaler{}
 	err = h.client.Get(ctx, types.NamespacedName{
 		Namespace: hpa.Namespace,
@@ -138,12 +159,11 @@ func (h *hpaOperator) nonScheduleHPA(kind string) {
 	if err != nil {
 		if k8serrros.IsNotFound(err) {
 			// create
-			ctx := context.Background()
 			err = h.client.Create(ctx, hpa)
 			if err != nil && !k8serrros.IsAlreadyExists(err) {
 				h.log.Error(err, "failed to create HPA")
-				return
 			}
+			return
 		}
 		h.log.Error(err, "failed to get HPA")
 		return
@@ -160,7 +180,6 @@ func (h *hpaOperator) nonScheduleHPA(kind string) {
 		}
 	}
 	if needUpdate {
-		ctx := context.Background()
 		err = h.client.Update(ctx, hpa)
 		if err != nil {
 			h.log.Error(err, "failed to update HPA")

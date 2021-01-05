@@ -56,9 +56,9 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return ctrl.Result{}, err
 	}
 
-	hpaOperator := wrapper.NewHPAOperator(r.Client, r.Log, req.NamespacedName, deployment.Annotations)
+	hpaOperator := wrapper.NewHPAOperator(r.Client, r.Log, req.NamespacedName, deployment.Annotations, "Deployment", deployment.UID)
+	hpaOperator.DoHorizontalPodAutoscaler(ctx)
 
-	hpaOperator.DoHorizontalPodAutoscaler("Deployment")
 	return ctrl.Result{}, nil
 }
 
