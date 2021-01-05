@@ -41,7 +41,7 @@ type DeploymentReconciler struct {
 
 func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-	_ = r.Log.WithValues("deployment", req.NamespacedName)
+	deploymentLog := r.Log.WithValues("deployment", req.NamespacedName)
 
 	deployment := &appsv1.Deployment{}
 	err := r.Client.Get(ctx, req.NamespacedName, deployment)
@@ -57,8 +57,14 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	}
 
 	hpaOperator := wrapper.NewHPAOperator(r.Client, r.Log, req.NamespacedName, deployment.Annotations, "Deployment", deployment.UID)
-	hpaOperator.DoHorizontalPodAutoscaler(ctx)
-
+	requeue, err := hpaOperator.DoHorizontalPodAutoscaler(ctx)
+	if err != nil {
+		deploymentLog.Error(err, "DoHorizontalPodAutoscaler failed")
+		if requeue {
+			return ctrl.Result{}, err
+		}
+	}
+	deploymentLog.Info("DoHorizontalPodAutoscaler successfully")
 	return ctrl.Result{}, nil
 }
 
