@@ -8,11 +8,11 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/go-logr/logr"
 	"k8s.io/api/autoscaling/v2beta2"
 	k8serrros "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -41,17 +41,15 @@ var (
 
 type hpaOperator struct {
 	client         client.Client
-	log            logr.Logger
 	namespacedName types.NamespacedName
 	annotations    map[string]string
 	kind           string
 	uid            types.UID
 }
 
-func NewHPAOperator(client client.Client, log logr.Logger, namespacedName types.NamespacedName, annotations map[string]string, kind string, uid types.UID) HPAOperator {
+func NewHPAOperator(client client.Client, namespacedName types.NamespacedName, annotations map[string]string, kind string, uid types.UID) HPAOperator {
 	return &hpaOperator{
 		client:         client,
-		log:            log,
 		namespacedName: namespacedName,
 		annotations:    annotations,
 		kind:           kind,
@@ -60,14 +58,13 @@ func NewHPAOperator(client client.Client, log logr.Logger, namespacedName types.
 }
 
 type HPAOperator interface {
-	DoHorizontalPodAutoscaler(ctx context.Context) (bool, error)
+	DoHorizontalPodAutoscaler() (bool, error)
 }
 
-func (h *hpaOperator) DoHorizontalPodAutoscaler(ctx context.Context) (bool, error) {
-	hpaLog := h.log.WithName("HorizontalPodAutoscaler").WithValues(h.kind, h.namespacedName)
-
+func (h *hpaOperator) DoHorizontalPodAutoscaler() (bool, error) {
 	enable := false
 	annotationHPAEnable := false
+
 	if val, ok := h.annotations[HPAEnable]; ok {
 		if val == "true" {
 			enable = true
@@ -75,8 +72,7 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler(ctx context.Context) (bool, erro
 		annotationHPAEnable = true
 	}
 	if !enable {
-		hpaLog.Info("the HPA is disabled in the workload")
-		// 存在对应的 annotation，但是其值不为 true，那么执行删除 HPA 操作
+		klog.InfoS("The HPA is disabled in the workload", h.kind, h.namespacedName)
 		if annotationHPAEnable {
 			hpa := &v2beta2.HorizontalPodAutoscaler{
 				ObjectMeta: metav1.ObjectMeta{
@@ -84,9 +80,9 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler(ctx context.Context) (bool, erro
 					Namespace: h.namespacedName.Namespace,
 				},
 			}
-			err := h.client.Delete(ctx, hpa)
+			err := h.client.Delete(context.TODO(), hpa)
 			if err != nil && !k8serrros.IsNotFound(err) {
-				hpaLog.Error(err, "failed to delete the HPA")
+				klog.ErrorS(err, "Failed to delete the HPA", h.kind, h.namespacedName)
 			}
 		}
 		return false, nil
@@ -96,12 +92,11 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler(ctx context.Context) (bool, erro
 	if _, ok := h.annotations[HPAScheduleJobs]; ok {
 		scheduleEnable = true
 	}
-	// (1) 处理定时 HPA 资源
+
 	if scheduleEnable {
 
 	} else {
-		// (2) 创建普通 HPA 资源
-		requeue, err := h.nonScheduleHPA(ctx, hpaLog)
+		requeue, err := h.nonScheduleHPA()
 		if err != nil {
 			return requeue, err
 		}
@@ -109,12 +104,20 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler(ctx context.Context) (bool, erro
 	return false, nil
 }
 
-func (h *hpaOperator) nonScheduleHPA(ctx context.Context, hpaLog logr.Logger) (bool, error) {
+// scheduleHPA
+// Logic for handling schedule HPA
+func (h *hpaOperator) scheduleHPA() (bool, error) {
+	return true, nil
+}
+
+// nonScheduleHPA
+// Logic for handling nonSchedule HPA
+func (h *hpaOperator) nonScheduleHPA() (bool, error) {
 	minReplicas, err := extractAnnotationIntValue(h.annotations, HPAMinReplicas)
 	if err != nil {
-		h.log.Error(err, "extractAnnotation minReplicas failed")
+		klog.ErrorS(err, "ExtractAnnotation minReplicas failed", h.kind, h.namespacedName)
 	}
-	// 创建普通的 HPA 资源时，maxReplicas 是必选字段
+	// When creating the nonSchedulerHPA, maxReplicas is a required filed
 	maxReplicas, err := extractAnnotationIntValue(h.annotations, HPAMaxReplicas)
 	if err != nil {
 		return false, fmt.Errorf("extractAnnotation maxReplicas failed: %v", err)
@@ -162,24 +165,23 @@ func (h *hpaOperator) nonScheduleHPA(ctx context.Context, hpaLog logr.Logger) (b
 	}
 
 	curHPA := &v2beta2.HorizontalPodAutoscaler{}
-	err = h.client.Get(ctx, types.NamespacedName{
+	err = h.client.Get(context.TODO(), types.NamespacedName{
 		Namespace: hpa.Namespace,
 		Name:      hpa.Name,
 	}, curHPA)
 	if err != nil {
 		if k8serrros.IsNotFound(err) {
-			// create
-			err = h.client.Create(ctx, hpa)
+			err = h.client.Create(context.TODO(), hpa)
 			if err != nil && !k8serrros.IsAlreadyExists(err) {
-				// 重新入队列, 触发下一次的处理逻辑
+				// Requeue, triggering the next processing logic
 				return true, fmt.Errorf("failed to create HPA: %v", err)
 			}
 			return false, nil
 		}
-		// 重新入队列, 触发下一次的处理逻辑
+		// Requeue, triggering the next processing logic
 		return true, fmt.Errorf("failed to get HPA: %v", err)
 	}
-	// update
+
 	needUpdate := false
 	if metricsExist {
 		if !reflect.DeepEqual(curHPA.Spec, hpa.Spec) {
@@ -191,9 +193,10 @@ func (h *hpaOperator) nonScheduleHPA(ctx context.Context, hpaLog logr.Logger) (b
 		}
 	}
 	if needUpdate {
-		hpaLog.Info("Annotation is diff and need to update")
-		err = h.client.Update(ctx, hpa)
+		klog.InfoS("annotation is diff and need to update", h.kind, h.namespacedName)
+		err = h.client.Update(context.TODO(), hpa)
 		if err != nil {
+			// Requeue, triggering the next processing logic
 			return true, fmt.Errorf("failed to update HPA: %v", err)
 		}
 	}

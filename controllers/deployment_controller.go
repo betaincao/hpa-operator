@@ -19,12 +19,12 @@ package controllers
 import (
 	"context"
 
-	"github.com/navigatorcloud/hpa-operator/pkg/wrapper"
-
 	"github.com/go-logr/logr"
+	"github.com/navigatorcloud/hpa-operator/pkg/wrapper"
 	appsv1 "k8s.io/api/apps/v1"
 	k8serrros "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -40,11 +40,8 @@ type DeploymentReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get;update;patch
 
 func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	ctx := context.Background()
-	deploymentLog := r.Log.WithValues("deployment", req.NamespacedName)
-
 	deployment := &appsv1.Deployment{}
-	err := r.Client.Get(ctx, req.NamespacedName, deployment)
+	err := r.Client.Get(context.TODO(), req.NamespacedName, deployment)
 	if err != nil {
 		if k8serrros.IsNotFound(err) {
 			// Object not found, return.
@@ -56,15 +53,16 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return ctrl.Result{}, err
 	}
 
-	hpaOperator := wrapper.NewHPAOperator(r.Client, r.Log, req.NamespacedName, deployment.Annotations, "Deployment", deployment.UID)
-	requeue, err := hpaOperator.DoHorizontalPodAutoscaler(ctx)
+	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, deployment.Annotations, "Deployment", deployment.UID)
+	requeue, err := hpaOperator.DoHorizontalPodAutoscaler()
 	if err != nil {
-		deploymentLog.Error(err, "DoHorizontalPodAutoscaler failed")
+		klog.ErrorS(err, "DoHorizontalPodAutoscaler failed", "deployment", req.NamespacedName)
 		if requeue {
 			return ctrl.Result{}, err
 		}
 	}
-	deploymentLog.Info("DoHorizontalPodAutoscaler successfully")
+
+	klog.InfoS("DoHorizontalPodAutoscaler successfully", "deployment", req.NamespacedName)
 	return ctrl.Result{}, nil
 }
 
