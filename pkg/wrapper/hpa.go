@@ -12,7 +12,7 @@ import (
 	k8serrros "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog/v2"
+	"k8s.io/klog"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -72,7 +72,7 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler() (bool, error) {
 		annotationHPAEnable = true
 	}
 	if !enable {
-		klog.InfoS("The HPA is disabled in the workload", h.kind, h.namespacedName)
+		klog.Info(fmt.Sprintf("The HPA is disabled in the workload and %s: %s", h.kind, h.namespacedName))
 		if annotationHPAEnable {
 			hpa := &v2beta2.HorizontalPodAutoscaler{
 				ObjectMeta: metav1.ObjectMeta{
@@ -82,7 +82,9 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler() (bool, error) {
 			}
 			err := h.client.Delete(context.TODO(), hpa)
 			if err != nil && !k8serrros.IsNotFound(err) {
-				klog.ErrorS(err, "Failed to delete the HPA", h.kind, h.namespacedName)
+				klog.Error(fmt.Sprintf("Failed to delete the HPA: %v and %s: %s", err, h.kind, h.namespacedName))
+			} else {
+				klog.Info(fmt.Sprintf("Delete HPA successfully and %s: %s", h.kind, h.namespacedName))
 			}
 		}
 		return false, nil
@@ -115,7 +117,7 @@ func (h *hpaOperator) scheduleHPA() (bool, error) {
 func (h *hpaOperator) nonScheduleHPA() (bool, error) {
 	minReplicas, err := extractAnnotationIntValue(h.annotations, HPAMinReplicas)
 	if err != nil {
-		klog.ErrorS(err, "ExtractAnnotation minReplicas failed", h.kind, h.namespacedName)
+		klog.Error(fmt.Sprintf("ExtractAnnotation minReplicas failed: %v and %s: %s", err, h.kind, h.namespacedName))
 	}
 	// When creating the nonSchedulerHPA, maxReplicas is a required filed
 	maxReplicas, err := extractAnnotationIntValue(h.annotations, HPAMaxReplicas)
@@ -176,6 +178,7 @@ func (h *hpaOperator) nonScheduleHPA() (bool, error) {
 				// Requeue, triggering the next processing logic
 				return true, fmt.Errorf("failed to create HPA: %v", err)
 			}
+			klog.Info(fmt.Sprintf("Create HPA successfully and %s: %s", h.kind, h.namespacedName))
 			return false, nil
 		}
 		// Requeue, triggering the next processing logic
@@ -193,12 +196,15 @@ func (h *hpaOperator) nonScheduleHPA() (bool, error) {
 		}
 	}
 	if needUpdate {
-		klog.InfoS("annotation is diff and need to update", h.kind, h.namespacedName)
+		klog.Info(fmt.Sprintf("Annotation is diff and need to update and %s: %s", h.kind, h.namespacedName))
 		err = h.client.Update(context.TODO(), hpa)
 		if err != nil {
 			// Requeue, triggering the next processing logic
 			return true, fmt.Errorf("failed to update HPA: %v", err)
 		}
+		klog.Info(fmt.Sprintf("Update HPA successfully and %s: %s", h.kind, h.namespacedName))
+	} else {
+		klog.Info(fmt.Sprintf("Annotation is same and %s: %s", h.kind, h.namespacedName))
 	}
 	return false, nil
 }

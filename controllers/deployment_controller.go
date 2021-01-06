@@ -18,13 +18,14 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-logr/logr"
 	"github.com/navigatorcloud/hpa-operator/pkg/wrapper"
 	appsv1 "k8s.io/api/apps/v1"
 	k8serrros "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/klog/v2"
+	"k8s.io/klog"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -56,13 +57,12 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, deployment.Annotations, "Deployment", deployment.UID)
 	requeue, err := hpaOperator.DoHorizontalPodAutoscaler()
 	if err != nil {
-		klog.ErrorS(err, "DoHorizontalPodAutoscaler failed", "deployment", req.NamespacedName)
+		klog.Error(fmt.Sprintf("DoHorizontalPodAutoscaler failed: %v and deployment: %s", err, req.NamespacedName))
 		if requeue {
 			return ctrl.Result{}, err
 		}
 	}
 
-	klog.InfoS("DoHorizontalPodAutoscaler successfully", "deployment", req.NamespacedName)
 	return ctrl.Result{}, nil
 }
 
