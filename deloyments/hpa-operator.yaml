@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.navigatorcloud.io/component: hpa-operator
+  name: hpa-operator
+  namespace: navigatorcloud
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.navigatorcloud.io/component: hpa-operator
+  name: navigatorcloud:hpa-operator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [ "autoscaling" ]
+    resources: [ "horizontalpodautoscalers"]
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.navigator.io/component: hpa-operator
+  name: hpa-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: navigatorcloud:hpa-operator
+subjects:
+  - kind: ServiceAccount
+    name: hpa-operator
+    namespace: navigatorcloud
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: hpa-operator
+  name: hpa-operator
+  namespace: navigatorcloud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hpa-operator
+  template:
+    metadata:
+      labels:
+        app: hpa-operator
+    spec:
+      containers:
+        - image: navigatorcloud/hpa-operator:v0.0.1
+          name: hpa-operator
+          volumeMounts:
+            - name: localtime
+              mountPath: /etc/localtime
+              readOnly: true
+          ports:
+            - name: metrics
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: 100m
+              memory: 100Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
+      serviceAccountName: hpa-operator
+      volumes:
+        - name: localtime
+          hostPath:
+            path: /etc/localtime
