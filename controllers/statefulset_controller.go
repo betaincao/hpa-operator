@@ -18,12 +18,22 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"time"
+
+	"github.com/navigatorcloud/hpa-operator/pkg/wrapper"
+	k8serrros "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/klog"
 
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+var (
+	requeueAfterTime = 500 * time.Microsecond
 )
 
 // StatefulSetReconciler reconciles a StatefulSet object
@@ -37,10 +47,27 @@ type StatefulSetReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets/status,verbs=get;update;patch
 
 func (r *StatefulSetReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
-	_ = r.Log.WithValues("statefulset", req.NamespacedName)
+	statefulset := &appsv1.StatefulSet{}
+	err := r.Client.Get(context.TODO(), req.NamespacedName, statefulset)
+	if err != nil {
+		if k8serrros.IsNotFound(err) {
+			// Object not found, return.
+			// Created objects are automatically garbage collected.
+			// For additional clean logic use finalizers
+			return ctrl.Result{}, nil
+		}
+		// Error reading the object - requeue the request
+		return ctrl.Result{Requeue: true, RequeueAfter: requeueAfterTime}, err
+	}
 
-	// your logic here
+	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, statefulset.Annotations, "Statefulset", statefulset.UID)
+	requeue, err := hpaOperator.DoHorizontalPodAutoscaler()
+	if err != nil {
+		klog.Error(fmt.Sprintf("DoHorizontalPodAutoscaler failed: %v and statefulset: %s", err, req.NamespacedName))
+	}
+	if requeue {
+		return ctrl.Result{Requeue: true, RequeueAfter: requeueAfterTime}, err
+	}
 
 	return ctrl.Result{}, nil
 }

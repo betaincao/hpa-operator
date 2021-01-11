@@ -51,18 +51,17 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: true, RequeueAfter: requeueAfterTime}, err
 	}
 
 	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, deployment.Annotations, "Deployment", deployment.UID)
 	requeue, err := hpaOperator.DoHorizontalPodAutoscaler()
 	if err != nil {
 		klog.Error(fmt.Sprintf("DoHorizontalPodAutoscaler failed: %v and deployment: %s", err, req.NamespacedName))
-		if requeue {
-			return ctrl.Result{}, err
-		}
 	}
-
+	if requeue {
+		return ctrl.Result{Requeue: true, RequeueAfter: requeueAfterTime}, err
+	}
 	return ctrl.Result{}, nil
 }
 
