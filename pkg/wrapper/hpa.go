@@ -63,28 +63,31 @@ type HPAOperator interface {
 
 func (h *hpaOperator) DoHorizontalPodAutoscaler() (bool, error) {
 	enable := false
-	annotationHPAEnable := false
-
 	if val, ok := h.annotations[HPAEnable]; ok {
 		if val == "true" {
 			enable = true
 		}
-		annotationHPAEnable = true
 	}
 	if !enable {
 		klog.Info(fmt.Sprintf("The HPA is disabled in the workload and %s: %s", h.kind, h.namespacedName))
-		if annotationHPAEnable {
-			hpa := &v2beta2.HorizontalPodAutoscaler{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      h.namespacedName.Name,
-					Namespace: h.namespacedName.Namespace,
-				},
+
+		hpa := &v2beta2.HorizontalPodAutoscaler{}
+		err := h.client.Get(context.TODO(), h.namespacedName, hpa)
+		if err != nil {
+			if !k8serrros.IsNotFound(err) {
+				// Requeue, triggering the next processing logic
+				return true, fmt.Errorf("failed to get HPA: %v", err)
 			}
-			err := h.client.Delete(context.TODO(), hpa)
-			if err != nil && !k8serrros.IsNotFound(err) {
-				klog.Error(fmt.Sprintf("Failed to delete the HPA: %v and %s: %s", err, h.kind, h.namespacedName))
-			} else {
-				klog.Info(fmt.Sprintf("Delete HPA successfully and %s: %s", h.kind, h.namespacedName))
+		} else {
+			// The HPA managed-by the HPA-operator needs to the deleted when
+			// hpa enable is false
+			if mapSubset(hpa.Labels, HPADefaultLabels) {
+				err := h.client.Delete(context.TODO(), hpa)
+				if err != nil && !k8serrros.IsNotFound(err) {
+					klog.Error(fmt.Sprintf("Failed to delete the HPA: %v and %s: %s", err, h.kind, h.namespacedName))
+				} else {
+					klog.Info(fmt.Sprintf("Delete HPA successfully and %s: %s", h.kind, h.namespacedName))
+				}
 			}
 		}
 		return false, nil
@@ -167,10 +170,7 @@ func (h *hpaOperator) nonScheduleHPA() (bool, error) {
 	}
 
 	curHPA := &v2beta2.HorizontalPodAutoscaler{}
-	err = h.client.Get(context.TODO(), types.NamespacedName{
-		Namespace: hpa.Namespace,
-		Name:      hpa.Name,
-	}, curHPA)
+	err = h.client.Get(context.TODO(), h.namespacedName, curHPA)
 	if err != nil {
 		if k8serrros.IsNotFound(err) {
 			err = h.client.Create(context.TODO(), hpa)
@@ -223,4 +223,20 @@ func extractAnnotationIntValue(annotations map[string]string, annotationName str
 		return 0, errors.New(annotationName + " value for workload should be positive number")
 	}
 	return value, nil
+}
+
+func mapSubset(source, subset map[string]string) bool {
+	if source == nil || subset == nil {
+		return false
+	}
+	for k, v := range subset {
+		if val, ok := source[k]; ok {
+			if val != v {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	return true
 }
