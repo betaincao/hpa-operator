@@ -150,5 +150,5 @@ metadata:
     app: hpa-example
   annotations:
     hpa.autoscaling.navigatorcloud.io/enable: "true"
-    hpa.autoscaling.navigatorcloud.io/schedule-jobs: '{"scheduleJobs":[{"type":"scale-up","schedule":"0 0 */10 * * *","targetSize":10},{"type":"scale-down","schedule":"0 0 */15 * * *","targetSize":5}]}'
+    hpa.autoscaling.navigatorcloud.io/schedule-jobs: '{"scheduleJobs":[{"type":"scale-up","schedule":"0 0 10 * * *","targetSize":10},{"type":"scale-down","schedule":"0 0 */15 * * *","targetSize":5}]}'
 ```
