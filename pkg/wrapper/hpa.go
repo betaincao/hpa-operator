@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/navigatorcloud/hpa-operator/pkg/apis"
+
 	"k8s.io/api/autoscaling/v2beta2"
 	k8serrros "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,15 +47,18 @@ type hpaOperator struct {
 	annotations    map[string]string
 	kind           string
 	uid            types.UID
+	cronHPA        CronHPA
 }
 
-func NewHPAOperator(client client.Client, namespacedName types.NamespacedName, annotations map[string]string, kind string, uid types.UID) HPAOperator {
+func NewHPAOperator(client client.Client, namespacedName types.NamespacedName, annotations map[string]string,
+	kind string, uid types.UID, cronHPA CronHPA) HPAOperator {
 	return &hpaOperator{
 		client:         client,
 		namespacedName: namespacedName,
 		annotations:    annotations,
 		kind:           kind,
 		uid:            uid,
+		cronHPA:        cronHPA,
 	}
 }
 
@@ -99,7 +104,10 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler() (bool, error) {
 	}
 
 	if scheduleEnable {
-
+		requeue, err := h.scheduleHPA()
+		if err != nil {
+			return requeue, err
+		}
 	} else {
 		requeue, err := h.nonScheduleHPA()
 		if err != nil {
@@ -112,7 +120,53 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler() (bool, error) {
 // scheduleHPA
 // Logic for handling schedule HPA
 func (h *hpaOperator) scheduleHPA() (bool, error) {
-	return true, nil
+	var scheduleJobs apis.ScheduleJobs
+	if val, ok := h.annotations[HPAScheduleJobs]; !ok {
+		return false, fmt.Errorf("annatation scheduleJobs is not exist")
+	} else {
+		err := json.Unmarshal([]byte(val), &scheduleJobs)
+		if err != nil {
+			return false, fmt.Errorf("extractAnnotation scheduleJobs failed: %v", err)
+		}
+	}
+	blockOwnerDeletion := true
+	isController := true
+	ref := metav1.OwnerReference{
+		APIVersion:         "apps/v1",
+		Kind:               h.kind,
+		Name:               h.namespacedName.Name,
+		UID:                h.uid,
+		BlockOwnerDeletion: &blockOwnerDeletion,
+		Controller:         &isController,
+	}
+	hpa := &v2beta2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      h.namespacedName.Name,
+			Namespace: h.namespacedName.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				ref,
+			},
+			Annotations: make(map[string]string),
+			Labels:      HPADefaultLabels,
+		},
+		Spec: v2beta2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: v2beta2.CrossVersionObjectReference{
+				Kind:       h.kind,
+				Name:       h.namespacedName.Name,
+				APIVersion: "apps/v1",
+			},
+		},
+	}
+	for _, job := range scheduleJobs.Jobs {
+		hpa.Annotations[CronHPAType] = string(job.Type)
+		hpa.Spec.MaxReplicas = job.TargetSize
+		hpa.Spec.MinReplicas = &job.TargetSize
+		err := h.cronHPA.AddJob(job, hpa, h.client)
+		if err != nil {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // nonScheduleHPA

@@ -39,8 +39,9 @@ var (
 // StatefulSetReconciler reconciles a StatefulSet object
 type StatefulSetReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	Log     logr.Logger
+	Scheme  *runtime.Scheme
+	CronHPA wrapper.CronHPA
 }
 
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
@@ -60,7 +61,8 @@ func (r *StatefulSetReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error)
 		return ctrl.Result{Requeue: true, RequeueAfter: requeueAfterTime}, err
 	}
 
-	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, statefulset.Annotations, "Statefulset", statefulset.UID)
+	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, statefulset.Annotations, "Statefulset",
+		statefulset.UID, r.CronHPA)
 	requeue, err := hpaOperator.DoHorizontalPodAutoscaler()
 	if err != nil {
 		klog.Error(fmt.Sprintf("DoHorizontalPodAutoscaler failed: %v and statefulset: %s", err, req.NamespacedName))

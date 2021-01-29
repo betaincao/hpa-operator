@@ -20,6 +20,8 @@ import (
 	"flag"
 	"os"
 
+	"github.com/navigatorcloud/hpa-operator/pkg/wrapper"
+
 	"k8s.io/client-go/rest"
 
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -80,18 +82,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	setupLog.Info("starting cron daemon")
+	cronHPA := wrapper.NewCronHPA()
+	cronHPA.Start()
+
 	if err = (&controllers.DeploymentReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("Deployment"),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Log:     ctrl.Log.WithName("controllers").WithName("Deployment"),
+		Scheme:  mgr.GetScheme(),
+		CronHPA: cronHPA,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Deployment")
 		os.Exit(1)
 	}
 	if err = (&controllers.StatefulSetReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("StatefulSet"),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Log:     ctrl.Log.WithName("controllers").WithName("StatefulSet"),
+		Scheme:  mgr.GetScheme(),
+		CronHPA: cronHPA,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "StatefulSet")
 		os.Exit(1)
@@ -101,6 +109,7 @@ func main() {
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
+		cronHPA.Stop()
 		os.Exit(1)
 	}
 }

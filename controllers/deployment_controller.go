@@ -33,8 +33,9 @@ import (
 // DeploymentReconciler reconciles a Deployment object
 type DeploymentReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	Log     logr.Logger
+	Scheme  *runtime.Scheme
+	CronHPA wrapper.CronHPA
 }
 
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -54,7 +55,8 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return ctrl.Result{Requeue: true, RequeueAfter: requeueAfterTime}, err
 	}
 
-	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, deployment.Annotations, "Deployment", deployment.UID)
+	hpaOperator := wrapper.NewHPAOperator(r.Client, req.NamespacedName, deployment.Annotations, "Deployment",
+		deployment.UID, r.CronHPA)
 	requeue, err := hpaOperator.DoHorizontalPodAutoscaler()
 	if err != nil {
 		klog.Error(fmt.Sprintf("DoHorizontalPodAutoscaler failed: %v and deployment: %s", err, req.NamespacedName))
