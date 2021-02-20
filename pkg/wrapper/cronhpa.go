@@ -24,6 +24,7 @@ type CronHPA interface {
 	Start()
 	Stop()
 	Remove(job apis.Job, hpa *v2beta2.HorizontalPodAutoscaler)
+	RemoveByJobKey(jobKey string)
 }
 
 type cronHPA struct {
@@ -65,6 +66,8 @@ func (c *cronHPA) AddJob(job apis.Job, hpa *v2beta2.HorizontalPodAutoscaler, cli
 		}
 	} else {
 		// already exist and check the schedule is same
+		klog.Infof("already exist and check the schedule is same")
+		klog.Infof("%v", c.jobs)
 		if !reflect.DeepEqual(job, detail.job) {
 			c.Remove(job, hpa)
 			cronHPAJob := newCronHPAJob(hpa, client)
@@ -80,6 +83,7 @@ func (c *cronHPA) AddJob(job apis.Job, hpa *v2beta2.HorizontalPodAutoscaler, cli
 			}
 		}
 	}
+	klog.Infof("last jobs: %v", c.jobs)
 	klog.Infof("cronHPAJob(%s) successfully added", jobKey)
 	return nil
 }
@@ -93,13 +97,21 @@ func (c *cronHPA) Stop() {
 }
 
 func (c *cronHPA) Remove(job apis.Job, hpa *v2beta2.HorizontalPodAutoscaler) {
-	c.jobsLock.Lock()
-	defer c.jobsLock.Unlock()
 	jobKey := buildJobKey(job, hpa)
 	if detail, ok := c.jobs[jobKey]; ok {
 		c.daemon.Remove(detail.entryID)
 	}
 	klog.Infof("cronHPAJob(%s) successfully removed", jobKey)
+}
+
+func (c *cronHPA) RemoveByJobKey(jobKey string) {
+	c.jobsLock.Lock()
+	defer c.jobsLock.Unlock()
+	if detail, ok := c.jobs[jobKey]; ok {
+		c.daemon.Remove(detail.entryID)
+		delete(c.jobs, jobKey)
+		klog.Infof("cronHPAJob(%s) successfully removed, entryId: %v", jobKey, detail.entryID)
+	}
 }
 
 type cronHPAJob struct {
@@ -146,6 +158,7 @@ func (cj *cronHPAJob) Run() {
 	default:
 		klog.Errorf("get CronHPA: %v and resource is %s/%s", err, cj.hpa.Namespace, cj.hpa.Name)
 	}
+	klog.Infof("Do once finished")
 	return
 }
 

@@ -87,6 +87,14 @@ func (h *hpaOperator) DoHorizontalPodAutoscaler() (bool, error) {
 			// The HPA managed-by the HPA-operator needs to the deleted when
 			// hpa enable is false
 			if mapSubset(hpa.Labels, HPADefaultLabels) {
+				// remove cron job
+				if _, ok := hpa.ObjectMeta.Annotations[CronHPAType]; ok {
+					klog.Infof("%#+v", h)
+					//todo delete cron job
+					jobKey := fmt.Sprintf("%s/%s/%s", hpa.ObjectMeta.Annotations[CronHPAType], hpa.Namespace, hpa.Name)
+					h.cronHPA.RemoveByJobKey(jobKey)
+					klog.Infof("Delete cronJob successfully and jobKey: %s", jobKey)
+				}
 				err := h.client.Delete(context.TODO(), hpa)
 				if err != nil && !k8serrros.IsNotFound(err) {
 					klog.Error(fmt.Sprintf("Failed to delete the HPA: %v and %s: %s", err, h.kind, h.namespacedName))
